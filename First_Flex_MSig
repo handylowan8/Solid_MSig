@@ -1,0 +1,119 @@
+// Solidity version specification
+pragma solidity ^0.8.0;
+
+contract MultiSigWallet {
+    address[] public owners;
+    uint public requiredSignatures;
+
+    // Enum for role types
+    enum Role { Basic, Level1, Level2, Level3 }
+
+    // Structure for storing transaction information
+    struct Transaction {
+        address to;
+        uint value;
+        bytes data;
+        bool executed;
+        uint numConfirmations;
+    }
+
+    // Mapping to keep track of owner roles
+    mapping(address => Role) public roles;
+
+    // Mapping to keep track of transaction limits based on role
+    mapping(Role => uint) public roleLimits;
+
+    // Array of transactions
+    Transaction[] public transactions;
+
+    // Mapping for confirmation tracking
+    mapping(uint => mapping(address => bool)) public isConfirmed;
+
+    // Modifier to restrict function access to owners only
+    modifier onlyOwner() {
+        require(isOwner(msg.sender), "Not owner");
+        _;
+    }
+
+    // Constructor for setting up owners and required signatures
+    constructor(address[] memory _owners, uint _requiredSignatures) {
+        require(_owners.length > 0, "Owners required");
+        require(
+            _requiredSignatures > 0 && _requiredSignatures <= _owners.length,
+            "Invalid number of required signatures"
+        );
+
+        for (uint i = 0; i < _owners.length; i++) {
+            owners.push(_owners[i]);
+            roles[_owners[i]] = Role.Basic; // Default role is Basic
+        }
+        requiredSignatures = _requiredSignatures;
+    }
+
+    // Function to check if an address is an owner
+    function isOwner(address _address) private view returns(bool) {
+        for (uint i = 0; i < owners.length; i++) {
+            if (owners[i] == _address) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Function to submit a transaction
+    function submitTransaction(address _to, uint _value, bytes memory _data) public onlyOwner {
+        Transaction memory newTx = Transaction({
+            to: _to,
+            value: _value,
+            data: _data,
+            executed: false,
+            numConfirmations: 0
+        });
+
+        transactions.push(newTx);
+    }
+
+    // Function to confirm a transaction
+    function confirmTransaction(uint _txIndex) public onlyOwner {
+        Transaction storage transaction = transactions[_txIndex];
+        require(!transaction.executed, "Transaction already executed");
+        require(!isConfirmed[_txIndex][msg.sender], "Transaction already confirmed");
+
+        isConfirmed[_txIndex][msg.sender] = true;
+        transaction.numConfirmations += 1;
+    }
+
+    // Function to execute a transaction
+    function executeTransaction(uint _txIndex) public {
+        Transaction storage transaction = transactions[_txIndex];
+        require(transaction.numConfirmations >= requiredSignatures, "Not enough confirmations");
+        require(!transaction.executed, "Transaction already executed");
+
+        // Check if transaction value exceeds any role limits
+        for (uint i = 0; i < owners.length; i++) {
+            if (transaction.value > roleLimits[roles[owners[i]]]) {
+                require(isConfirmed[_txIndex][owners[i]], "Transaction requires higher role confirmation");
+            }
+        }
+
+        transaction.executed = true;
+        (bool success, ) = transaction.to.call{value: transaction.value}(transaction.data);
+        require(success, "Transaction failed");
+    }
+
+    // Function to assign roles to owners
+    function assignRole(address _owner, Role _role) public onlyOwner {
+        require(isOwner(_owner), "Not an owner");
+        roles[_owner] = _role;
+    }
+
+    // Function to set limits for roles
+    function setRoleLimit(Role _role, uint _limit) public onlyOwner {
+        roleLimits[_role] = _limit;
+    }
+
+    // Function to get the contract's balance
+    function getBalance() public view returns (uint) {
+        return address(this).balance;
+    }
+}
